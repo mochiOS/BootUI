@@ -6,6 +6,7 @@
 //! framebuffer, allocate memory, access firmware services, or manage input.
 
 mod color;
+mod draw;
 mod geometry;
 mod surface;
 
