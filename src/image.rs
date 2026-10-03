@@ -129,6 +129,57 @@ impl<'pixels> Image<'pixels> {
             ),
         )
     }
+
+    fn filtered_color(
+        self,
+        destination_x: u64,
+        destination_y: u64,
+        destination_width: u32,
+        destination_height: u32,
+        samples_x: u32,
+        samples_y: u32,
+    ) -> Color {
+        let mut alpha_sum = 0_u64;
+        let mut red_sum = 0_u64;
+        let mut green_sum = 0_u64;
+        let mut blue_sum = 0_u64;
+        for sample_y in 0..samples_y {
+            let virtual_y = destination_y
+                .saturating_mul(u64::from(samples_y))
+                .saturating_add(u64::from(sample_y));
+            let source_y = source_coordinate(
+                virtual_y,
+                destination_height.saturating_mul(samples_y),
+                self.height(),
+            );
+            for sample_x in 0..samples_x {
+                let virtual_x = destination_x
+                    .saturating_mul(u64::from(samples_x))
+                    .saturating_add(u64::from(sample_x));
+                let source_x = source_coordinate(
+                    virtual_x,
+                    destination_width.saturating_mul(samples_x),
+                    self.width(),
+                );
+                let color = self.bilinear_color(source_x, source_y);
+                let alpha = u64::from(color.alpha);
+                alpha_sum += alpha;
+                red_sum += u64::from(color.red) * alpha;
+                green_sum += u64::from(color.green) * alpha;
+                blue_sum += u64::from(color.blue) * alpha;
+            }
+        }
+        if alpha_sum == 0 {
+            return Color::TRANSPARENT;
+        }
+        let sample_count = u64::from(samples_x) * u64::from(samples_y);
+        Color::rgba(
+            rounded_u8(red_sum, alpha_sum),
+            rounded_u8(green_sum, alpha_sum),
+            rounded_u8(blue_sum, alpha_sum),
+            rounded_u8(alpha_sum, sample_count),
+        )
+    }
 }
 
 impl Surface<'_> {
@@ -169,19 +220,26 @@ impl Surface<'_> {
         if left >= right || top >= bottom {
             return;
         }
+        let samples_x = image.width().div_ceil(destination.size.width).clamp(1, 8);
+        let samples_y = image.height().div_ceil(destination.size.height).clamp(1, 8);
 
         for destination_y in top..bottom {
             let local_y =
                 u64::try_from(destination_y - i64::from(destination.origin.y)).unwrap_or_default();
-            let source_y = source_coordinate(local_y, destination.size.height, image.height());
             for destination_x in left..right {
                 let local_x = u64::try_from(destination_x - i64::from(destination.origin.x))
                     .unwrap_or_default();
-                let source_x = source_coordinate(local_x, destination.size.width, image.width());
                 self.blend_pixel(
                     saturating_i64_to_i32(destination_x),
                     saturating_i64_to_i32(destination_y),
-                    image.bilinear_color(source_x, source_y),
+                    image.filtered_color(
+                        local_x,
+                        local_y,
+                        destination.size.width,
+                        destination.size.height,
+                        samples_x,
+                        samples_y,
+                    ),
                     u8::MAX,
                 );
             }
@@ -217,6 +275,10 @@ fn interpolate(left: u8, right: u8, fraction: u64) -> u8 {
     let value = (u64::from(left) * inverse + u64::from(right) * fraction + FRACTION_ONE / 2)
         >> FRACTION_BITS;
     u8::try_from(value).unwrap_or(u8::MAX)
+}
+
+fn rounded_u8(numerator: u64, denominator: u64) -> u8 {
+    u8::try_from((numerator + denominator / 2) / denominator).unwrap_or(u8::MAX)
 }
 
 fn saturating_i64_to_i32(value: i64) -> i32 {
@@ -267,5 +329,21 @@ mod tests {
         let mut surface = Surface::new(&mut destination, 1, 1, 1, PixelFormat::Rgb).unwrap();
         surface.draw_image(image, Point::new(0, 0));
         assert_eq!(surface.color_at(0, 0), Some(Color::rgb(128, 128, 128)));
+    }
+
+    #[test]
+    fn downscaling_filters_transparency_without_dark_fringes() {
+        let source = [
+            255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let image = Image::new(&source, 4, 1, 16).unwrap();
+        let mut destination = [0; 4];
+        let mut surface = Surface::new(&mut destination, 1, 1, 1, PixelFormat::Rgb).unwrap();
+        surface.draw_image_scaled(image, Rect::new(0, 0, 1, 1));
+
+        let color = surface.color_at(0, 0).unwrap();
+        assert!((120..=136).contains(&color.red));
+        assert_eq!(color.red, color.green);
+        assert_eq!(color.green, color.blue);
     }
 }
