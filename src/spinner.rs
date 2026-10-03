@@ -18,7 +18,6 @@ const POSITIONS: [(i32, i32); DOT_COUNT] = [
 ];
 
 const ARC_POINT_COUNT: usize = 32;
-const ARC_SWEEP_POINTS: usize = 22;
 const ARC_POSITIONS: [(i32, i32); ARC_POINT_COUNT] = [
     (0, -1_024),
     (200, -1_004),
@@ -97,21 +96,39 @@ impl Surface<'_> {
         if style.radius == 0 || style.stroke_width == 0 || style.color.alpha == 0 {
             return;
         }
-        let start = usize::from(phase) % ARC_POINT_COUNT;
-        let brush_radius = style.stroke_width.div_ceil(2);
-        for offset in 0..ARC_SWEEP_POINTS {
-            let current = arc_point(center, style.radius, (start + offset) % ARC_POINT_COUNT);
-            self.fill_circle(current, brush_radius, style.color);
-            if offset + 1 < ARC_SWEEP_POINTS {
-                let next = arc_point(
+        let outer = i64::from(style.radius);
+        let inner = outer.saturating_sub(i64::from(style.stroke_width));
+        let left = (i64::from(center.x) - outer).max(0);
+        let top = (i64::from(center.y) - outer).max(0);
+        let right = (i64::from(center.x) + outer)
+            .min(i64::from(self.width()))
+            .max(0);
+        let bottom = (i64::from(center.y) + outer)
+            .min(i64::from(self.height()))
+            .max(0);
+        let gap_index = usize::from(phase) % ARC_POINT_COUNT;
+        let gap_direction = ARC_POSITIONS[gap_index];
+        let cap_offset = ARC_POINT_COUNT / 8;
+        let cap_directions = [
+            ARC_POSITIONS[(gap_index + cap_offset) % ARC_POINT_COUNT],
+            ARC_POSITIONS[(gap_index + ARC_POINT_COUNT - cap_offset) % ARC_POINT_COUNT],
+        ];
+        for y in top..bottom {
+            for x in left..right {
+                let coverage = arc_coverage(
                     center,
-                    style.radius,
-                    (start + offset + 1) % ARC_POINT_COUNT,
+                    inner,
+                    outer,
+                    gap_direction,
+                    cap_directions,
+                    saturating_i64_to_i32(x),
+                    saturating_i64_to_i32(y),
                 );
-                self.fill_circle(
-                    Point::new((current.x + next.x) / 2, (current.y + next.y) / 2),
-                    brush_radius,
+                self.blend_pixel(
+                    saturating_i64_to_i32(x),
+                    saturating_i64_to_i32(y),
                     style.color,
+                    coverage,
                 );
             }
         }
@@ -144,11 +161,51 @@ impl Surface<'_> {
     }
 }
 
-fn arc_point(center: Point, radius: u32, index: usize) -> Point {
-    let (unit_x, unit_y) = ARC_POSITIONS[index];
-    let x = i64::from(center.x) + i64::from(unit_x) * i64::from(radius) / i64::from(UNIT);
-    let y = i64::from(center.y) + i64::from(unit_y) * i64::from(radius) / i64::from(UNIT);
-    Point::new(saturating_i64_to_i32(x), saturating_i64_to_i32(y))
+fn arc_coverage(
+    center: Point,
+    inner_radius: i64,
+    outer_radius: i64,
+    gap_direction: (i32, i32),
+    cap_directions: [(i32, i32); 2],
+    pixel_x: i32,
+    pixel_y: i32,
+) -> u8 {
+    const SUBPIXEL_SCALE: i64 = 16;
+    const OFFSETS: [i64; 8] = [1, 3, 5, 7, 9, 11, 13, 15];
+    let center_x = i64::from(center.x) * SUBPIXEL_SCALE;
+    let center_y = i64::from(center.y) * SUBPIXEL_SCALE;
+    let inner_squared = i128::from(inner_radius * SUBPIXEL_SCALE).pow(2);
+    let outer_squared = i128::from(outer_radius * SUBPIXEL_SCALE).pow(2);
+    let centerline = (inner_radius + outer_radius) * SUBPIXEL_SCALE / 2;
+    let cap_radius = (outer_radius - inner_radius) * SUBPIXEL_SCALE / 2;
+    let cap_radius_squared = i128::from(cap_radius).pow(2);
+    let cap_centers = cap_directions.map(|(x, y)| {
+        (
+            i64::from(x) * centerline / i64::from(UNIT),
+            i64::from(y) * centerline / i64::from(UNIT),
+        )
+    });
+    let direction_x = i128::from(gap_direction.0);
+    let direction_y = i128::from(gap_direction.1);
+    let mut inside = 0_u16;
+    for offset_y in OFFSETS {
+        let y = i64::from(pixel_y) * SUBPIXEL_SCALE + offset_y - center_y;
+        for offset_x in OFFSETS {
+            let x = i64::from(pixel_x) * SUBPIXEL_SCALE + offset_x - center_x;
+            let distance = i128::from(x).pow(2) + i128::from(y).pow(2);
+            let in_ring = distance >= inner_squared && distance <= outer_squared;
+            let dot = i128::from(x) * direction_x + i128::from(y) * direction_y;
+            let cross = i128::from(x) * direction_y - i128::from(y) * direction_x;
+            let in_gap = dot > 0 && cross.abs() <= dot;
+            let in_cap = cap_centers.iter().any(|(cap_x, cap_y)| {
+                i128::from(x - cap_x).pow(2) + i128::from(y - cap_y).pow(2) <= cap_radius_squared
+            });
+            if (in_ring && !in_gap) || in_cap {
+                inside += 1;
+            }
+        }
+    }
+    u8::try_from((inside * 255 + 32) / 64).unwrap_or(u8::MAX)
 }
 
 fn multiply_u8(left: u8, right: u8) -> u8 {
@@ -191,7 +248,7 @@ mod tests {
             ArcSpinnerStyle::new(10, 2, Color::WHITE),
         );
 
-        assert!(surface.color_at(20, 10).unwrap().red > 250);
-        assert_eq!(surface.color_at(10, 20).unwrap(), Color::BLACK);
+        assert_eq!(surface.color_at(20, 10).unwrap(), Color::BLACK);
+        assert!(surface.color_at(29, 20).unwrap().red > 0);
     }
 }
