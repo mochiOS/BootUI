@@ -8,8 +8,12 @@
 mod color;
 mod draw;
 mod geometry;
+mod image;
+mod spinner;
 mod surface;
 
 pub use color::Color;
 pub use geometry::{Point, Rect, Size};
+pub use image::{Image, ImageError};
+pub use spinner::SpinnerStyle;
 pub use surface::{PixelFormat, Surface, SurfaceError};
