@@ -1,0 +1,20 @@
+[package]
+name = "bootui"
+version = "0.1.0"
+edition = "2024"
+description = "Low-layer, no-std UI rendering for mochiOS boot environments"
+repository = "https://github.com/mochiOS/BootUI"
+license = "GPL-3.0-only"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
