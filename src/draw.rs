@@ -15,7 +15,6 @@ impl Surface<'_> {
         if rect.is_empty() || color.alpha == 0 {
             return;
         }
-        let radius = radius.min(rect.size.width / 2).min(rect.size.height / 2);
         let Some(bounds) = clipped_bounds(rect, self.width(), self.height()) else {
             return;
         };
@@ -87,6 +86,18 @@ fn rounded_rect_coverage(rect: Rect, radius: u32, pixel_x: i32, pixel_y: i32) ->
         return u8::MAX;
     }
 
+    let radius = (radius as f32).min(rect.size.width.min(rect.size.height) as f32 * 0.5);
+    let x = pixel_x as f32;
+    let y = pixel_y as f32;
+    let left = rect.origin.x as f32;
+    let top = rect.origin.y as f32;
+    let right = left + rect.size.width as f32;
+    let bottom = top + rect.size.height as f32;
+    if (x >= left + radius && x + 1.0 <= right - radius)
+        || (y >= top + radius && y + 1.0 <= bottom - radius)
+    {
+        return 255;
+    }
     let shape = crate::continuous_corner::RoundedRect::uniform(
         [
             rect.origin.x as f32,
@@ -94,7 +105,7 @@ fn rounded_rect_coverage(rect: Rect, radius: u32, pixel_x: i32, pixel_y: i32) ->
             rect.size.width as f32,
             rect.size.height as f32,
         ],
-        radius as f32,
+        radius,
     );
     let mut inside = 0;
     for sy in [0.125, 0.375, 0.625, 0.875] {
