@@ -5,6 +5,11 @@
 //! `BootUI` renders into memory supplied by its caller. It does not own the
 //! framebuffer, allocate memory, access firmware services, or manage input.
 
+#[cfg(test)]
+extern crate std;
+
+#[allow(dead_code)]
+mod continuous_corner;
 mod color;
 mod draw;
 mod geometry;

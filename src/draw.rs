@@ -87,35 +87,19 @@ fn rounded_rect_coverage(rect: Rect, radius: u32, pixel_x: i32, pixel_y: i32) ->
         return u8::MAX;
     }
 
-    let left = i64::from(rect.origin.x) * SUBPIXEL_SCALE;
-    let top = i64::from(rect.origin.y) * SUBPIXEL_SCALE;
-    let right = (i64::from(rect.origin.x) + i64::from(rect.size.width)) * SUBPIXEL_SCALE;
-    let bottom = (i64::from(rect.origin.y) + i64::from(rect.size.height)) * SUBPIXEL_SCALE;
-    let radius = i64::from(radius) * SUBPIXEL_SCALE;
-    let radius_squared = i128::from(radius) * i128::from(radius);
+    let shape = crate::continuous_corner::RoundedRect::uniform(
+        [
+            rect.origin.x as f32,
+            rect.origin.y as f32,
+            rect.size.width as f32,
+            rect.size.height as f32,
+        ],
+        radius as f32,
+    );
     let mut inside = 0;
-
-    for offset_y in SAMPLE_OFFSETS {
-        let sample_y = i64::from(pixel_y) * SUBPIXEL_SCALE + offset_y;
-        for offset_x in SAMPLE_OFFSETS {
-            let sample_x = i64::from(pixel_x) * SUBPIXEL_SCALE + offset_x;
-            let corner_x = if sample_x < left + radius {
-                left + radius
-            } else if sample_x > right - radius {
-                right - radius
-            } else {
-                sample_x
-            };
-            let corner_y = if sample_y < top + radius {
-                top + radius
-            } else if sample_y > bottom - radius {
-                bottom - radius
-            } else {
-                sample_y
-            };
-            let delta_x = i128::from(sample_x - corner_x);
-            let delta_y = i128::from(sample_y - corner_y);
-            if delta_x * delta_x + delta_y * delta_y <= radius_squared {
+    for sy in [0.125, 0.375, 0.625, 0.875] {
+        for sx in [0.125, 0.375, 0.625, 0.875] {
+            if shape.contains((pixel_x as f32 + sx, pixel_y as f32 + sy)) {
                 inside += 1;
             }
         }
