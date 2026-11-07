@@ -17,7 +17,7 @@ const POSITIONS: [(i32, i32); DOT_COUNT] = [
     (-512, -887),
 ];
 
-const ARC_POINT_COUNT: usize = 32;
+pub(crate) const ARC_POINT_COUNT: usize = 32;
 const ARC_POSITIONS: [(i32, i32); ARC_POINT_COUNT] = [
     (0, -1_024),
     (200, -1_004),
